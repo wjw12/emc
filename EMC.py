@@ -10,11 +10,10 @@ class EMC2D():
         self.M_ROT = 200
         self.M_DATA = samples
         self.NORM = 5000000 # normalize factor
-        
         self.model,self.WIDTH = self.loadBmp(model)
         self.M_PIX = self.WIDTH * self.WIDTH
         #self.getDataFromCxi(cxifile,samples)
-        self.exp_data = load_sparse_csc('exp_data.npz')
+        self.exp_data = load_sparse_csc('exp_data.npz')[:,:samples]
         self.generateRotationSpace()
         # normalize model
         self.model = self.normalizeImgArray(self.model)
@@ -149,10 +148,10 @@ class EMC2D():
                 self.EM()
             self.compress()
             # bluring the model
-            k = np.ones((3,3)) / 9
-            self.model = convolve(self.model,k)
-            if it%2==1:
-                self.show(iterations,it+1)
+            #k = np.ones((3,3)) / 9
+            #self.model = convolve(self.model,k)
+            if it%4==3:
+                self.show(3,(it+1)//4)
         print ('Done.')
         
     
@@ -183,6 +182,44 @@ def save_sparse_csc(filename,array):
 def load_sparse_csc(filename):
     loader = np.load(filename)
     return csc_matrix((loader['data'], loader['indices'], loader['indptr']), shape = loader['shape'])
+
+def convertData(dat_file,detector_file):
+    dat = open(dat_file)
+    detector = open(detector_file)
+    i = iter(dat)
+    frames = int(i.readline())
+    next(i)
+    next(i) # skip 2 lines
+    print ('Total frames:', frames)
+    ii = iter(detector)
+    pixels = int(ii.readline())
+    print ('Pixels in the detector:',pixels)
+    det_dict = {} # store the coordinates in a dictionary
+    for j in range(pixels):
+        coo = tuple(ii.readline().split('\t'))
+        coo = (90 - int(coo[1])) * 181 + (int(coo[0]) + 90)
+        det_dict[j] = int(coo)
+    exp_data = lil_matrix((181*181,frames),dtype='uint8')
+    for frame in range(frames):
+        locations = [int(n) for n in i.readline().split(' ') if n != '\n']
+        for n in locations:
+            exp_data[det_dict[n],frame] = 1
+        try:
+            next(i)
+            next(i)
+            next(i)
+            next(i) # skip 4 lines
+        except:
+            break
+        
+    exp_data = exp_data.tocsc()
+    save_sparse_csc('exp_data',exp_data)
+
+    # test plotting
+    img = exp_data.sum(axis=1).reshape((181,181))
+    img_plot = plt.imshow(img, cmap = cm.Greys_r)
+    img_plot.set_clim(0,np.max(img))
+    plt.show()
 
 if __name__ == '__main__':
     emc1 = EMC2D(samples=300000)
