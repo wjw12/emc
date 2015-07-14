@@ -9,11 +9,11 @@ class EMC2D():
     def __init__(self,model="2.bmp",cxifile='115.cxi',samples=1000):
         self.M_ROT = 200
         self.M_DATA = samples
-        self.NORM = 5000000 # normalize factor
+        self.NORM = 800000 # normalize factor
         self.model,self.WIDTH = self.loadBmp(model)
         self.M_PIX = self.WIDTH * self.WIDTH
         #self.getDataFromCxi(cxifile,samples)
-        self.exp_data = load_sparse_csc('exp_data.npz')[:,:samples]
+        self.exp_data = load_sparse_csc('exp_data_115.npz')[:,:samples].astype('float64')
         self.generateRotationSpace()
         # normalize model
         self.model = self.normalizeImgArray(self.model)
@@ -95,8 +95,8 @@ class EMC2D():
 
     def EM(self,row_n=1,col_n=1):
         P = self.cond_prob()
-        row_max_compare = np.tile( np.max(P,1)*0.9993, (self.M_DATA, 1)).T
-        col_max_compare = np.tile( np.max(P,0)*0.9993, (self.M_ROT, 1)) 
+        row_max_compare = np.tile( np.max(P,1)*0.999995, (self.M_DATA, 1)).T
+        col_max_compare = np.tile( np.max(P,0)*0.999995, (self.M_ROT, 1)) 
         P[P<row_max_compare] = 1e-100
         P[P<col_max_compare] = 1e-100
         '''
@@ -115,7 +115,13 @@ class EMC2D():
             #P[:,i][ind2] *= 2
         '''
         w = np.max(P,1)
-        self.weight = (w - np.min(w)) / (np.max(w) - np.min(w)) # 1*M_ROT array, weight for compression
+        maxw = np.max(w)
+        minw = np.min(w)
+        delta = 1e-50
+        if maxw - minw < delta:
+            self.weight = np.ones(w.shape)
+        else:
+            self.weight = (w - np.min(w)) / (np.max(w) - np.min(w)) # 1*M_ROT array, weight for compression
         # j-th element represents weight for j-th intensity
 
         new_inten = self.exp_data*csc_matrix(P.T)
@@ -142,16 +148,14 @@ class EMC2D():
         for it in range(iterations):
             print ("Iteration ",it+1)
             self.expand()
-            if it==0:
-                self.EM(2,1)
-            else:
-                self.EM()
+            self.EM()
             self.compress()
             # bluring the model
             #k = np.ones((3,3)) / 9
             #self.model = convolve(self.model,k)
-            if it%4==3:
-                self.show(3,(it+1)//4)
+            self.save_model(it+1)
+            if it==iterations-1:
+                self.show(1,1)
         print ('Done.')
         
     
@@ -162,6 +166,9 @@ class EMC2D():
         img_plot.set_clim(0.0, np.max(model))
         if subplot == total:
             plt.show()
+
+    def save_model(self,n):
+        np.save('model_' + str(n),self.model)
 
 
 def showProgress(total,current,char='#',length=75):
@@ -223,4 +230,4 @@ def convertData(dat_file,detector_file):
 
 if __name__ == '__main__':
     emc1 = EMC2D(samples=300000)
-    emc1.run(12)
+    emc1.run(10)
