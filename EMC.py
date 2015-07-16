@@ -7,18 +7,20 @@ from scipy.ndimage import convolve
 
 class EMC2D():
     def __init__(self,model="2.bmp",cxifile='115.cxi',samples=1000):
-        self.M_ROT = 200
+        self.M_ROT = 250
         self.M_DATA = samples
-        self.NORM = 800000 # normalize factor
+        self.NORM = 100000 # normalize factor
         self.model,self.WIDTH = self.loadBmp(model)
         self.M_PIX = self.WIDTH * self.WIDTH
         #self.getDataFromCxi(cxifile,samples)
-        self.exp_data = load_sparse_csc('exp_data_115.npz')[:,:samples].astype('float64')
+        self.exp_data = load_sparse_csc('exp_data_025.npz')[:,:samples].astype('float64')
         self.generateRotationSpace()
         # normalize model
         self.model = self.normalizeImgArray(self.model)
         # normalize experimental data
         self.exp_data /= self.NORM
+
+        self.prev_model = 0
 
     def getDataFromCxi(self,cxi,n): # get n frames from cxi file
         print ('Getting data from cxi file...')
@@ -93,26 +95,32 @@ class EMC2D():
         return prob
 
 
-    def EM(self,row_n=1,col_n=1):
+    def EM(self,row_n=200,col_n=2):
         P = self.cond_prob()
-        row_max_compare = np.tile( np.max(P,1)*0.999995, (self.M_DATA, 1)).T
-        col_max_compare = np.tile( np.max(P,0)*0.999995, (self.M_ROT, 1)) 
-        P[P<row_max_compare] = 1e-100
-        P[P<col_max_compare] = 1e-100
-        '''
-        # pick the most similar ones
-        for i in range(self.M_ROT):
-            ind = np.argpartition(P[i,:], self.M_DATA-row_n)
-            ind1 = ind[:self.M_DATA-row_n]
-            #ind2 = ind[row_n:]
-            P[i,:][ind1] = 1e-12
-            #P[i,:][ind2] *= 2
+        
         for i in range(self.M_DATA):
             ind = np.argpartition(P[:,i], self.M_ROT-col_n)
             ind1 = ind[:self.M_ROT-col_n]
-            #ind2 = ind[col_n:]
-            P[:,i][ind1] = 1e-12
-            #P[:,i][ind2] *= 2
+            ind2 = ind[-col_n:]
+            P[:,i][ind1] = 1e-80
+        for i in range(self.M_ROT):
+            ind = np.argpartition(P[i,:], self.M_DATA-row_n)
+            ind1 = ind[:self.M_DATA-row_n]
+            ind2 = ind[-row_n:]
+            P[i,:][ind1] = 1e-80
+        # test P
+        
+        #c = P != 1e-80
+        #a = np.where(np.sum(c,axis=0) == col_n)
+        #i = a[0][0]
+        '''
+        ind = np.argpartition(P[0,:], self.M_DATA-row_n)
+        ind1 = ind[:self.M_DATA-row_n]
+        ind2 = ind[-row_n:]
+        p = np.sort(P[0,:][ind2])
+        x = [i for i in range(len(p))]
+        plt.plot(x,p)
+        plt.show()
         '''
         w = np.max(P,1)
         maxw = np.max(w)
@@ -134,6 +142,7 @@ class EMC2D():
         self.intensities = new_inten
 
     def compress(self):
+        self.prev_model = self.model
         new_inten = self.intensities * np.tile(self.weight, (self.M_PIX,1))
         r_img = np.reshape(new_inten,(self.WIDTH,self.WIDTH,self.M_ROT))
         model = np.zeros((self.WIDTH,self.WIDTH))
@@ -145,19 +154,41 @@ class EMC2D():
 
 
     def run(self,iterations):
+        log_file = open('diff.log','w')
         for it in range(iterations):
             print ("Iteration ",it+1)
             self.expand()
             self.EM()
             self.compress()
             # bluring the model
-            #k = np.ones((3,3)) / 9
-            #self.model = convolve(self.model,k)
+            k = np.ones((3,3)) / 9
+            self.model = convolve(self.model,k)
             self.save_model(it+1)
+            # calculate the difference
+            diff = np.mean(np.abs(self.model - self.prev_model))
+            print (diff, file=log_file)
             if it==iterations-1:
                 self.show(1,1)
         print ('Done.')
-        
+
+    def runModel(self,model_file,iterations,curr_it=1):
+        self.model = np.load(model_file)
+        log_file = open('diff.log','a')
+        for it in range(iterations):
+            print("Iteration ",it+curr_it)
+            self.expand()
+            self.EM()
+            self.compress()
+            # bluring the model
+            k = np.ones((3,3)) / 9
+            self.model = convolve(self.model,k)
+            self.save_model(it+curr_it)
+            # calculate the difference
+            diff = np.mean(np.abs(self.model - self.prev_model))
+            print (diff, file=log_file)
+            if it==iterations-1:
+                self.show(1,1)
+        print ('Done.')
     
     def show(self,total,subplot):
         plt.subplot(1,total,subplot)
@@ -229,5 +260,6 @@ def convertData(dat_file,detector_file):
     plt.show()
 
 if __name__ == '__main__':
-    emc1 = EMC2D(samples=300000)
-    emc1.run(10)
+    emc1 = EMC2D(samples=450000)
+    #emc1.run(50)
+    emc1.runModel('model_50.npy',50,51)
