@@ -134,3 +134,30 @@ def makeData():
         exp_data[:,i] = rotate(m,random_mat[i]).array[R,:,:].flatten()
 
     np.save('data'+str(M_DATA)+'_'+str(R),exp_data)
+
+def randomMatrices(n):
+    '''
+    save and return a tuple of two lists of random rotation matrices and their inverse
+    '''
+    from numpy.linalg import qr
+    import cPickle
+    rot = []
+    inv = []
+    for i in range(n):
+        q, r = qr(np.random.randn(3,3))
+        d = np.diagonal(r)
+        d = d/np.abs(d)
+        q = np.multiply(q,d)
+        if np.linalg.det(q) < 0:
+            q = np.fliplr(q)
+        try:
+            iq = np.linalg.inv(q)
+        except: # in case of q is singular
+            i -=1
+            continue
+        rot.append(q)
+        inv.append(iq)
+    t = (rot,inv)
+    with open('_'.join(['rotation', str(n)]), 'wb') as f:
+            cPickle.dump(t, f)
+    return t
