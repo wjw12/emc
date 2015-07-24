@@ -4,6 +4,7 @@ from scipy.ndimage.interpolation import affine_transform
 from scipy.ndimage.morphology import binary_dilation
 from mayavi import mlab
 from copy import deepcopy
+import cPickle
 
 class model():
     def __init__(self,R,support):
@@ -18,12 +19,21 @@ class model():
 
     @mlab.show
     def show(self):
-        mlab.pipeline.volume(mlab.pipeline.scalar_field(self.array))
+        max_ = np.max(self.array)
+        mlab.pipeline.volume(mlab.pipeline.scalar_field(self.array), vmin=0.2*max_, vmax=0.8*max_)
+        mlab.pipeline.image_plane_widget(mlab.pipeline.scalar_field(self.array),
+                            plane_orientation='x_axes',
+                            slice_index=8)
+        mlab.pipeline.image_plane_widget(mlab.pipeline.scalar_field(self.array),
+                            plane_orientation='y_axes',
+                            slice_index=8)
+        #mlab.contour3d(self.array, contours=8, opacity=0.3, transparent=True)
+        mlab.outline()
 
     def rotate(self,rot_mat):
         displace = np.array([self.R,self.R,self.R])
         offset = -np.dot(rot_mat,displace) + displace
-        self.array = affine_transform(self.array,rot_mat,offset,order=5)
+        self.array = affine_transform(self.array,rot_mat,offset)
 
     def clear(self):
         self.array = np.zeros(self.shape)
@@ -36,18 +46,19 @@ def rotate(m,mat):
 def support2(R):
     size = 2 * R + 1
     s = np.zeros((size,size,size)).astype('bool')
-    s[R, R, R-4:R+4] = True
-    s[R, R-4:R+4, R+4] = True
-    s = binary_dilation(s,iterations=3)
+    s[R, R, R-2:R+3] = True
+    s[R, R-2:R+3, R] = True
+    s[R-2:R+3, R, R] = True
+    s = binary_dilation(s,iterations=5)
     return s
 
 def support1(R):
     size = 2*R+1
     s = np.zeros((size,size,size)).astype('bool')
     s[R, R, R-5:R+5] = True
-    s[R, R-4:R+4, R-4] = True
-    s[R:R+4, R, R] = True
-    s = binary_dilation(s,iterations=3)
+    s[R, R-4:R+4,R] = True
+    s[R-4:R+4, R, R] = True
+    s = binary_dilation(s,iterations=2)
     return s
 
 def randomRotationMatrices(n):
@@ -119,6 +130,7 @@ def rotationSamples(m,n):
 
 
 def makeData():
+    import cPickle
     # generate random 2d data
     R = 8
     size = 2*R+1
@@ -128,12 +140,14 @@ def makeData():
     M_DATA = 1000
     M_PIX = size**2
     exp_data = np.zeros((M_PIX,M_DATA))
-    random_mat = randomRotationMatrices(M_DATA)
+    f = open('rotation_10000','rb')
+    random_mat = cPickle.load(f)[0]
 
     for i in range(M_DATA):
         exp_data[:,i] = rotate(m,random_mat[i]).array[R,:,:].flatten()
 
     np.save('data'+str(M_DATA)+'_'+str(R),exp_data)
+    f.close()
 
 def randomMatrices(n):
     '''

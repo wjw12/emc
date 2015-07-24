@@ -1,8 +1,6 @@
 from __future__ import division, print_function
-from copy import deepcopy
 from particle import *
 import matplotlib.pyplot as plt
-import cPickle
 
 class emc3d():
     def __init__(self,datafile):
@@ -14,25 +12,43 @@ class emc3d():
         self.NORM = 1000000 # normalize factor
 
         # generate rotation space
-        self.rotation, self.inv_rotation = rotationSamples(1000,1)
-        self.M_ROT = len(self.rotation)
-        print (self.M_ROT)
+        with open('rotation_10000') as f:
+            self.rotation, self.inv_rotation = cPickle.load(f)
+            self.rotation = self.rotation[1000:3000]
+            self.inv_rotation = self.inv_rotation[1000:3000]
+            self.M_ROT = len(self.rotation)
 
-        # create random model
-        s = support1(self.R)
+        # create initial model
+        s = support2(self.R)
         self.model = model(self.R,s)
-        #self.model.show()
+        # filtering
+        k = np.ones((3,3,3)) / 27
+        for i in range(4):
+            self.model.array = convolve(self.model.array, k)
+        self.model.show()
 
         # normalize
         self.model.array /= self.NORM
         self.exp_data /= self.NORM
 
         # density weight for compression
-        r = np.arange(0,self.size)
-        x, y, z = np.meshgrid(r,r,r)
-        R = self.R
-        self.density = 1./np.sqrt(((x-R)**2 + (y-R)**2 + (z-R)**2 + 1))
-        self.density /= np.mean(self.density)
+        # generate once and for all
+        '''
+        plane = np.ones((self.size,self.size))
+        m = np.zeros((self.size,self.size,self.size))
+        m[self.R, :, :] = plane
+        self.density = np.zeros((self.size,self.size,self.size))
+        for rot in self.inv_rotation:
+            displace = np.array([self.R,self.R,self.R])
+            offset = -np.dot(rot,displace) + displace
+            mm = affine_transform(m,rot,offset,order=4)
+            self.density += mm
+        np.save('_'.join(['density',str(self.M_ROT)]),self.density)
+        '''
+        self.density = np.load('_'.join(['density',str(self.M_ROT)]) + '.npy')
+
+        # a sphere mask to filter out margin
+        self.mask = np.load('mask.npy')
 
     def expand(self):
         result = np.zeros((self.M_PIX,self.M_ROT))
@@ -40,14 +56,13 @@ class emc3d():
         for j in range(self.M_ROT):
             #showProgress(self.M_ROT, j)
             off = -np.dot(self.rotation[j], displace) + displace
-            m = affine_transform(self.model.array, self.rotation[j], off, order=5)
+            m = affine_transform(self.model.array, self.rotation[j], off, order=4)
             result[:,j] = m[self.R,:,:].flatten()
         self.reference = result
 
 
     def compress(self):
         self.model.clear()
-        #self.reference = self.reference * np.tile(self.weight, (self.M_PIX,1))
         for i in range(self.M_ROT):
             #showProgress(self.M_ROT, i)
             piece = self.reference[:,i].reshape((self.size,self.size))
@@ -56,9 +71,12 @@ class emc3d():
             # rotate the piece
             displace = np.array([self.R,self.R,self.R])
             offset = -np.dot(self.inv_rotation[i],displace) + displace
-            piece_3d = affine_transform(piece_3d, self.inv_rotation[i], offset, order=5)
+            piece_3d = affine_transform(piece_3d, self.inv_rotation[i], offset, order=4)
             self.model.array += piece_3d
         self.model.array = self.model.array / self.density
+        self.model.array[np.isnan(self.model.array)] = 0
+        self.model.array[~self.mask] = 0
+        self.model.array[np.where(self.model.array < 0.001*np.max(self.model.array))] = 0
          
     def cond_prob(self):
         log_W = np.log(self.reference.T)
@@ -73,51 +91,21 @@ class emc3d():
         return prob
 
 
-    def EM(self,row_n=100,col_n=700):
+    def EM(self,row_n=2,col_n=1700): # row_n selects data for a certain rotation
         P = self.cond_prob()
-        # add contrast of P
-        #P = (P - np.min(P)) / (np.max(P) - np.min(P))
+        # normalize P
+        P = (P - np.min(P)) / (np.max(P) - np.min(P))
 
-        p = np.sum(P,1)
-        x = [i for i in range(len(p))]
-        plt.plot(x,p)
-        plt.show()
-
+        for i in range(self.M_DATA):
+            ind1 = np.argpartition(P[:,i], self.M_ROT-col_n)[:self.M_ROT-col_n]
+            P[:,i][ind1] = 1e-80
+        
         for i in range(self.M_ROT):
             ind = np.argpartition(P[i,:], self.M_DATA-row_n)
             ind1 = ind[:self.M_DATA-row_n]
-            ind2 = ind[-row_n:]
             P[i,:][ind1] = 1e-80
 
-        '''
-        ind = np.argpartition(P[10,:], self.M_ROT-row_n)
-        ind2 = ind[-row_n:]
-        p = np.sort(P[10,:][ind2])
-        x = [i for i in range(len(p))]
-        plt.plot(x,p)
-        plt.show()
-        '''
-        
-        for i in range(self.M_DATA):
-            ind1 = np.argpartition(P[:,i], self.M_ROT-col_n)[:self.M_ROT-col_n]
-            #ind2 = np.argpartition(P[:,i], 980)[-20:]
-            P[:,i][ind1] = 1e-80
-            #P[:,i][ind2] = 1e-80
-        
-        w = np.max(P,1)
-        maxw = np.max(w)
-        minw = np.min(w)
-        delta = 1e-50
-        if maxw - minw < delta:
-            self.weight = np.ones(w.shape)
-        else:
-            self.weight = (w - np.min(w)) / (np.max(w) - np.min(w)) # 1*M_ROT array, weight for compression
-        # j-th element represents weight for j-th reference
-
         new_refer = np.dot(self.exp_data,P.T)
-        #weight = np.tile( np.max(P,1), (self.M_PIX, 1))
-        #new_refer *= weight
-
         S = np.sum(P,1)
         new_refer /= np.tile(S, (self.M_PIX,1))
         self.reference = new_refer
@@ -128,13 +116,23 @@ class emc3d():
             self.expand()
             self.EM()
             self.compress()
-            # bluring the model
-            k = np.ones((3,3,3)) / 27
-            self.model.array = convolve(self.model.array,k)
             self.saveModel(it+1)
-            if it+1 == iterations:
-                self.model.array *= self.NORM
+            if it==iterations-1:
                 self.model.show()
+        print ('Done.')
+
+    def runModel(self,start,iterations):
+        '''
+        Run from previous model, given the starting iteration
+        '''
+        self.loadModel('_'.join(['model',str(start-1), str(self.R)]))
+        for it in range(start, start + iterations):
+            print ("Iteration ",it)
+            self.expand()
+            self.EM()
+            self.compress()
+            self.saveModel(it)
+            self.model.show()
         print ('Done.')
 
     def saveModel(self, n):
@@ -156,6 +154,10 @@ def showProgress(total,current,char='#',length=75):
     f.write('\r')
     if total == current:
         f.write('\n')
+
+@mlab.show
+def show(a):
+    mlab.pipeline.volume(mlab.pipeline.scalar_field(a))
 
 if __name__ == '__main__':
     emc = emc3d('data1000_8.npy')
