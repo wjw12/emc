@@ -9,7 +9,7 @@ class EMC2D():
     def __init__(self,model="2.bmp",cxifile='115.cxi',samples=1000):
         self.M_ROT = 250
         self.M_DATA = samples
-        self.NORM = 100000 # normalize factor
+        self.SCALE = 100000 # normalize factor
         self.model,self.WIDTH = self.loadBmp(model)
         self.M_PIX = self.WIDTH * self.WIDTH
         #self.getDataFromCxi(cxifile,samples)
@@ -18,7 +18,7 @@ class EMC2D():
         # normalize model
         self.model = self.normalizeImgArray(self.model)
         # normalize experimental data
-        self.exp_data /= self.NORM
+        self.exp_data /= self.SCALE
 
         self.prev_model = 0
 
@@ -69,20 +69,20 @@ class EMC2D():
         self.rotation = np.linspace(0,360,self.M_ROT)
 
     def normalizeImgArray(self,img):
-        return np.float64(img) / self.NORM
+        return np.float64(img) / self.SCALE
 
     def unnormalizeImgArray(self,img):
-        return np.float64(img * self.NORM)
+        return np.float64(img * self.SCALE)
 
     def expand(self):
         result = np.zeros((self.M_PIX,self.M_ROT))
         for j in range(self.M_ROT):
             rot_img = self.rotateImg(self.model,self.rotation[j]).reshape(self.M_PIX,1)
             result[:,j] = rot_img[:,0]
-        self.intensities = result
+        self.reference = result
 
     def cond_prob(self):
-        log_W = np.log(self.intensities.T)
+        log_W = np.log(self.reference.T)
         log_W[np.isinf(log_W) | np.isnan(log_W)] = -100
         W = np.exp(log_W)
         A = csc_matrix(log_W) * self.exp_data
@@ -132,19 +132,19 @@ class EMC2D():
             self.weight = (w - np.min(w)) / (np.max(w) - np.min(w)) # 1*M_ROT array, weight for compression
         # j-th element represents weight for j-th intensity
 
-        new_inten = self.exp_data*csc_matrix(P.T)
-        new_inten = new_inten.toarray()
+        new_refer = self.exp_data*csc_matrix(P.T)
+        new_refer = new_refer.toarray()
         weight = np.tile( np.max(P,1), (self.M_PIX, 1))
-        new_inten *= weight
+        new_refer *= weight
 
         S = np.sum(P,1)
-        new_inten /= np.tile(S, (self.M_PIX,1))
-        self.intensities = new_inten
+        new_refer /= np.tile(S, (self.M_PIX,1))
+        self.reference = new_refer
 
     def compress(self):
         self.prev_model = self.model
-        new_inten = self.intensities * np.tile(self.weight, (self.M_PIX,1))
-        r_img = np.reshape(new_inten,(self.WIDTH,self.WIDTH,self.M_ROT))
+        new_refer = self.reference * np.tile(self.weight, (self.M_PIX,1))
+        r_img = np.reshape(new_refer,(self.WIDTH,self.WIDTH,self.M_ROT))
         model = np.zeros((self.WIDTH,self.WIDTH))
         for j in range(self.M_ROT):
             re_img = self.rotateImg(r_img[:,:,j], -self.rotation[j])
