@@ -1,9 +1,17 @@
-﻿import numpy as np
+﻿"""
+Inplementation of EMC algorithm for 2D image reconstruction using sparse data
+Reference: Hugh T. Philipp, Kartik Ayyer, Mark W. Tate, Veit Elser, and Sol M. Gruner, 
+           "Solving structure with sparse, randomly-oriented x-ray data", OPTICS EXPRESS, 2012
+X-ray data can be downloaded from http://cxidb.org/id-18.html
+"""
+import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.cm as cm
 from scipy.ndimage.interpolation import rotate
 from scipy.sparse import csc_matrix,lil_matrix
 from scipy.ndimage import convolve
+
+__author__ = 'Jiewen_Wang'
 
 class EMC2D():
     def __init__(self,model="2.bmp",cxifile='115.cxi',samples=1000):
